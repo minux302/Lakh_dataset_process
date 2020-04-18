@@ -8,6 +8,11 @@ import pretty_midi as pm
 from tqdm import tqdm
 
 
+OCTAVE = 12
+FS = 4  # Sampling frequency of the columns, i.e. each column is spaced apart by 1./fs seconds.
+BAR_LEN = FS * 2
+
+
 def is_containing_data_directly(data_dir):
     """Determine if data.suffix is directly under the data_dir by
        considering the structure of a lakh dataset.
@@ -76,7 +81,71 @@ def change_tempo_midi(midi_file, save_path):
         print(str(midi_file), e)
 
 
-def tempo_change(original_root_dir, target_root_dir):
+def pianoroll_to_histo(pianoroll):
+    bar_num = pianoroll.shape[1] // BAR_LEN
+    histo_over_octave = np.zeros((pianoroll.shape[0], bar_num))
+    for i in range(bar_num):
+        histo_over_octave[:, i] = np.sum(pianoroll[:, i*BAR_LEN:(i+1)*BAR_LEN],
+                                         axis=1)
+    return histo_over_octave
+
+
+def compress_octave_notes(histo_over_octave):
+    histo = np.zeros((OCTAVE, histo_over_octave.shape[1]))
+    octave_num = histo_over_octave.shape[0] // OCTAVE
+    for i in range(octave_num - 1):
+        histo = np.add(histo, histo_over_octave[i*OCTAVE:(i+1)*OCTAVE])
+    return histo
+
+
+def midi_to_histo(midi_file, save_path):
+    """Generate histogram (histo) from midi_file.
+        histo (np.array):
+            histo[i][j]: non zero num per bar_j for key_i.
+            key_i is 0-11, it means C, Db, D, ..., Bb, B.
+            bar_j is index in range(time length in song // time length in bar).
+    """
+    try:
+        mid = pm.PrettyMIDI(str(midi_file))
+        pianoroll = mid.get_piano_roll()
+    except (KeyError, OSError, EOFError, ValueError,
+            AttributeError, IndexError, ZeroDivisionError) as e:
+        print(str(midi_file), e)
+        return
+
+    histo_over_octave = pianoroll_to_histo(pianoroll)  # shape: (128, pianoroll.shape[1] // bar_len)
+    histo = compress_octave_notes(histo_over_octave)  # shape: (12, pianoroll.shape[1] // bar_len)
+    pickle.dump(histo, open(str(save_path), 'wb'))
+    return
+
+
+def midi_to_indexroll(midi_file, save_path):
+    """Extract indexes of top note from midi.
+       indexroll is np.array, shape is (song_len)
+       (in the timing `t` that there is no notes, indexroll[t] = -1)
+    """
+    try:
+        mid = pm.PrettyMIDI(str(midi_file))
+        pianoroll = mid.get_piano_roll(fs=FS)
+    except (KeyError, OSError, EOFError, ValueError,
+            AttributeError, ZeroDivisionError) as e:
+        print(str(midi_file), e)
+        return
+
+    index_roll = []
+    for time_i in range(pianoroll.shape[1]):
+        note_indexes = np.nonzero(pianoroll[:, time_i])[0]
+        if len(note_indexes) == 0:
+            # add blank note
+            index_roll.append(-1)
+        else:
+            # add top note
+            index_roll.append(note_indexes[-1])
+    pickle.dump(np.array(index_roll), open(str(save_path), 'wb'))
+    return
+
+
+def lakh_tempo_change(original_root_dir, target_root_dir):
     process_lakh_dataset(original_root_dir=original_root_dir,
                          target_root_dir=target_root_dir,
                          original_suffix="mid",
@@ -84,8 +153,30 @@ def tempo_change(original_root_dir, target_root_dir):
                          process_file=change_tempo_midi)
 
 
+def lakh_midi_to_histo(orignla_root_dir, target_root_dir):
+    process_lakh_dataset(original_root_dir=original_root_dir,
+                         target_root_dir=target_root_dir,
+                         original_suffix='mid',
+                         target_suffix='pickle',
+                         process_file=midi_to_histo)
+
+
+def lakh_midi_to_indexroll(orignla_root_dir, target_root_dir):
+    process_lakh_dataset(original_root_dir=original_root_dir,
+                         target_root_dir=target_root_dir,
+                         original_suffix='mid',
+                         target_suffix='pickle',
+                         process_file=midi_to_indexroll)
+
+
 def preprocess(original_root_dir, target_root_dir):
-    tempo_change(original_root_dir, target_root_dir / "tempo_changed")
+    tempo_root_dir = target_root_dir / "tempo_changed"
+    histo_root_dir = target_root_dir / "histo"
+    indexroll_root_dir = target_root_dir / "indexroll"
+
+    # lakh_tempo_change(original_root_dir, tempo_root_dir)
+    # lakh_midi_to_histo(tempo_root_dir, histo_root_dir)
+    lakh_midi_to_indexroll(tempo_root_dir, indexroll_root_dir)
 
 
 if __name__ == "__main__":
