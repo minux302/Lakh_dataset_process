@@ -180,6 +180,6 @@ def preprocess(original_root_dir, target_root_dir):
 
 
 if __name__ == "__main__":
-    original_root_dir = Path("/home/azuma/workspace/dataset/chord_lstm_data/lmd_matched/A")
+    original_root_dir = Path("/home/azuma/workspace/dataset/chord_lstm_data/debug")
     target_root_dir = Path("dataset")
     preprocess(original_root_dir, target_root_dir)
