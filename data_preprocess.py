@@ -140,7 +140,13 @@ def midi_to_indexroll(midi_file, save_path):
             index_roll.append(-1)
         else:
             # add top note
-            index_roll.append(note_indexes[-1])
+            # index_roll.append(note_indexes[-1])
+            note_number = note_indexes[-1]
+            # restrict note range
+            if note_number < 84 and note_number >= 48:
+                index_roll.append(note_indexes[-1])
+            else:
+                index_roll.append(-1)
     pickle.dump(np.array(index_roll), open(str(save_path), 'wb'))
     return
 
