@@ -1,5 +1,6 @@
 # This code is based on data_processing.py in Jambot(https://github.com/brunnergino/JamBot)
 
+import copy
 import pickle
 from collections import Counter
 from pathlib import Path
@@ -13,17 +14,8 @@ from tqdm import tqdm
 OCTAVE = 12
 FS = 4  # Sampling frequency of the columns, i.e. each column is spaced apart by 1./fs seconds.
 BAR_LEN = FS * 2
+NUM_NOTES_IN_CHORD = 3
 BLANK_NOTE_ID = -1
-
-
-def is_containing_data_directly(data_dir):
-    """Determine if data.suffix is directly under the data_dir by
-       considering the structure of a lakh dataset.
-       ex. lmd_matched/R/F/C/TRRFCAT128F426A5B1/data.mid
-       If data_dir is 'TRRFCAT128F426A5B1', return True.
-    """
-    # tmp rule
-    return data_dir.is_dir() and len(data_dir.name) != 1
 
 
 def process_dir(original_dir, target_dir,
@@ -35,6 +27,31 @@ def process_dir(original_dir, target_dir,
                      original_file.name.replace(original_suffix,
                                                 target_suffix),
                      **kwargs)
+
+
+def create_target_dir_path(original_dir, original_root_dir, target_root_dir):
+    """<original_root_dir>/<path_to_dir(has data directly)>
+       =>
+       <targetl_root_dir>/<path_to_dir(has data directly)>
+    """
+    target_dir = copy.deepcopy(target_root_dir)
+    parents = original_dir.parents
+    for i, parent in enumerate(parents):
+        if parent.name == original_root_dir.name:
+            dir_parts = original_dir.parts[-(i+1):]
+            for dir_name in dir_parts:
+                target_dir = target_dir.joinpath(dir_name)
+    return target_dir
+
+
+def is_containing_data_directly(data_dir):
+    """Determine if data.suffix is directly under the data_dir by
+       considering the structure of a lakh dataset.
+       ex. lmd_matched/R/F/C/TRRFCAT128F426A5B1/data.mid
+       If data_dir is 'TRRFCAT128F426A5B1', return True.
+    """
+    # tmp rule
+    return data_dir.is_dir() and len(data_dir.name) != 1
 
 
 def process_lakh_dataset(original_root_dir, target_root_dir,
@@ -54,8 +71,9 @@ def process_lakh_dataset(original_root_dir, target_root_dir,
     """
     for original_dir in tqdm(original_root_dir.glob('**/*')):
         if is_containing_data_directly(original_dir):
-            target_dir = Path(str(original_dir).replace(original_root_dir.name,
-                                                        target_root_dir.name))
+            target_dir = create_target_dir_path(original_dir,
+                                                original_root_dir,
+                                                target_root_dir)
             if not(target_dir.exists()):
                 target_dir.mkdir(parents=True)
             process_dir(original_dir, target_dir,
@@ -110,14 +128,14 @@ def midi_to_histo(midi_file, save_path):
     """
     try:
         mid = pm.PrettyMIDI(str(midi_file))
-        pianoroll = mid.get_piano_roll()
+        pianoroll = mid.get_piano_roll(fs=FS*BAR_LEN)
     except (KeyError, OSError, EOFError, ValueError,
             AttributeError, IndexError, ZeroDivisionError) as e:
         print(str(midi_file), e)
         return
 
-    histo_over_octave = pianoroll_to_histo(pianoroll)  # shape: (128, pianoroll.shape[1] // bar_len)
-    histo = compress_octave_notes(histo_over_octave)  # shape: (12, pianoroll.shape[1] // bar_len)
+    histo_over_octave = pianoroll_to_histo(pianoroll)  # shape: (128, pianoroll.shape[1] // BAR_LEN)
+    histo = compress_octave_notes(histo_over_octave)  # shape: (12, pianoroll.shape[1] // BAR_LEN)
     pickle.dump(histo, open(str(save_path), 'wb'))
     return
 
@@ -151,6 +169,19 @@ def midi_to_indexroll(midi_file, save_path):
     return
 
 
+def histo_to_chords(histo_file, save_path):
+    """Generate chord list (chords) from histogram.
+        chords (list): chords[i] (tuple) includes notes (0-11) in bar_i.
+            bar_i is index in range(time length in song // time length in bar).
+            It is tuple, sorted, and len(chords[i]) <= NUM_NOTES_IN_CHORD.
+    """
+    histo = pickle.load(open(histo_file, 'rb'))
+    sorted_note_per_time = histo.argsort(axis=0)[-NUM_NOTES_IN_CHORD:]
+    chords = [tuple(sorted([note for note in sorted_note_per_time[:, i]]))
+              for i in range(sorted_note_per_time.shape[1])]
+    pickle.dump(chords, open(str(save_path), 'wb'))
+
+
 def lakh_tempo_change(original_root_dir, target_root_dir):
     process_lakh_dataset(original_root_dir=original_root_dir,
                          target_root_dir=target_root_dir,
@@ -159,7 +190,7 @@ def lakh_tempo_change(original_root_dir, target_root_dir):
                          process_file=change_tempo_midi)
 
 
-def lakh_midi_to_histo(orignla_root_dir, target_root_dir):
+def lakh_midi_to_histo(original_root_dir, target_root_dir):
     process_lakh_dataset(original_root_dir=original_root_dir,
                          target_root_dir=target_root_dir,
                          original_suffix='mid',
@@ -167,7 +198,7 @@ def lakh_midi_to_histo(orignla_root_dir, target_root_dir):
                          process_file=midi_to_histo)
 
 
-def lakh_midi_to_indexroll(orignla_root_dir, target_root_dir):
+def lakh_midi_to_indexroll(original_root_dir, target_root_dir):
     process_lakh_dataset(original_root_dir=original_root_dir,
                          target_root_dir=target_root_dir,
                          original_suffix='mid',
@@ -175,17 +206,27 @@ def lakh_midi_to_indexroll(orignla_root_dir, target_root_dir):
                          process_file=midi_to_indexroll)
 
 
-def preprocess(original_root_dir, target_root_dir):
+def lakh_histo_to_chords(original_root_dir, target_root_dir):
+    process_lakh_dataset(original_root_dir=original_root_dir,
+                         target_root_dir=target_root_dir,
+                         original_suffix='pickle',
+                         target_suffix='pickle',
+                         process_file=histo_to_chords)
+
+
+def preprocess():
+    original_root_dir = Path("/home/azuma/workspace/dataset/chord_lstm_data/debug")
+    target_root_dir = Path("dataset")
     tempo_root_dir = target_root_dir / "tempo_changed"
     histo_root_dir = target_root_dir / "histo"
     indexroll_root_dir = target_root_dir / "indexroll"
+    chords_root_dir = target_root_dir / "chords"
 
-    # lakh_tempo_change(original_root_dir, tempo_root_dir)
-    # lakh_midi_to_histo(tempo_root_dir, histo_root_dir)
+    lakh_tempo_change(original_root_dir, tempo_root_dir)
+    lakh_midi_to_histo(tempo_root_dir, histo_root_dir)
     lakh_midi_to_indexroll(tempo_root_dir, indexroll_root_dir)
+    lakh_histo_to_chords(histo_root_dir, chords_root_dir)
 
 
 if __name__ == "__main__":
-    original_root_dir = Path("/home/azuma/workspace/dataset/chord_lstm_data/debug")
-    target_root_dir = Path("dataset")
-    preprocess(original_root_dir, target_root_dir)
+    preprocess()
