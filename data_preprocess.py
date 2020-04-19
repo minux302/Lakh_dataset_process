@@ -1,3 +1,5 @@
+# This code is based on data_processing.py in Jambot(https://github.com/brunnergino/JamBot)
+
 import pickle
 from collections import Counter
 from pathlib import Path
@@ -11,6 +13,7 @@ from tqdm import tqdm
 OCTAVE = 12
 FS = 4  # Sampling frequency of the columns, i.e. each column is spaced apart by 1./fs seconds.
 BAR_LEN = FS * 2
+BLANK_NOTE_ID = -1
 
 
 def is_containing_data_directly(data_dir):
@@ -41,7 +44,7 @@ def process_lakh_dataset(original_root_dir, target_root_dir,
        Lakh dataset: https://colinraffel.com/projects/lmd/
         Args:
             original_root_dir (pathlib object): Path to root dir of Lakh dir
-                format, like `lmd_matched`.
+                format, like `lmd_full`, `lmd_matched`.
             target_root_dir (pathlib objext): Path to root dir of Lakh dir
                 format. If it does not exists, it will be created.
             original_suffix (str): Each data suffix before it is processed.
@@ -135,18 +138,15 @@ def midi_to_indexroll(midi_file, save_path):
     index_roll = []
     for time_i in range(pianoroll.shape[1]):
         note_indexes = np.nonzero(pianoroll[:, time_i])[0]
-        if len(note_indexes) == 0:
-            # add blank note
-            index_roll.append(-1)
+        if len(note_indexes) == 0:  # note is none
+            index_roll.append(BLANK_NOTE_ID)
         else:
-            # add top note
             # index_roll.append(note_indexes[-1])
             note_number = note_indexes[-1]
-            # restrict note range
-            if note_number < 84 and note_number >= 48:
-                index_roll.append(note_indexes[-1])
+            if note_number < 84 and note_number >= 48:  # restrict note range
+                index_roll.append(note_indexes[-1])  # add top note
             else:
-                index_roll.append(-1)
+                index_roll.append(BLANK_NOTE_ID)
     pickle.dump(np.array(index_roll), open(str(save_path), 'wb'))
     return
 
